@@ -278,6 +278,14 @@ function sameRunStyle(left: NativeMarkdownTextRun, right: NativeMarkdownTextRun)
   );
 }
 
+// MD4C ends permissive autolinks at commas, even when a comma continues the URL.
+function commaAutolinkContinuation(text: string): string | null {
+  const token = text.match(/^[^\s<>"`]+/)?.[0];
+  if (!token?.startsWith(",")) return null;
+  const continuation = token.replace(/[.,;:!?]+$/, "");
+  return continuation.length > 1 ? continuation : null;
+}
+
 function appendRun(
   runs: NativeMarkdownTextRun[],
   text: string,
@@ -309,6 +317,26 @@ function appendRun(
       : {}),
   };
   const previous = runs.at(-1);
+  const continuation = commaAutolinkContinuation(run.text);
+  if (
+    previous?.href &&
+    previous.externalHost &&
+    previous.text === previous.href &&
+    !run.href &&
+    continuation &&
+    sameRunStyle(previous, {
+      ...run,
+      href: previous.href,
+      externalHost: previous.externalHost,
+    })
+  ) {
+    runs[runs.length - 1] = {
+      ...previous,
+      text: previous.text + continuation,
+      href: previous.href + continuation,
+    };
+    return appendRun(runs, run.text.slice(continuation.length), context);
+  }
   if (previous && sameRunStyle(previous, run)) {
     runs[runs.length - 1] = { ...previous, text: previous.text + run.text };
     return runs;
@@ -417,24 +445,7 @@ function appendChildren(
   node: MarkdownNode,
   context: RunContext,
 ): NativeMarkdownTextRun[] {
-  const children = node.children ?? [];
-  for (let index = 0; index < children.length; index += 1) {
-    const child = children[index]!;
-    const continuation = bareAutolinkContinuation(child, children[index + 1]);
-    if (continuation) {
-      appendNode(
-        runs,
-        {
-          ...child,
-          href: continuation.href,
-          children: [{ type: "text", content: continuation.text }],
-        },
-        context,
-      );
-      appendRun(runs, continuation.remainder, context);
-      index += 1;
-      continue;
-    }
+  for (const child of node.children ?? []) {
     appendNode(runs, child, context);
   }
   return runs;
@@ -445,34 +456,6 @@ function nodeTextContent(node: MarkdownNode): string {
     return node.content;
   }
   return (node.children ?? []).map(nodeTextContent).join("");
-}
-
-function bareAutolinkContinuation(
-  node: MarkdownNode,
-  next: MarkdownNode | undefined,
-): { readonly href: string; readonly text: string; readonly remainder: string } | null {
-  if (node.type !== "link" || next?.type !== "text" || !node.href) return null;
-  const linkText = nodeTextContent(node);
-  if (linkText !== node.href) return null;
-
-  const token = nodeTextContent(next).match(/^[^\s<>"`]+/)?.[0];
-  if (!token?.startsWith(",")) return null;
-  const continuation = token.replace(/[.,;:!?]+$/, "");
-  if (continuation.length <= 1) return null;
-
-  const href = node.href + continuation;
-  try {
-    const parsed = new URL(href);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-  } catch {
-    return null;
-  }
-
-  return {
-    href,
-    text: linkText + continuation,
-    remainder: nodeTextContent(next).slice(continuation.length),
-  };
 }
 
 function appendNode(
@@ -579,7 +562,10 @@ function appendInlineChildren(
   node: MarkdownNode,
   context: RunContext,
 ): NativeMarkdownTextRun[] {
-  return appendChildren(runs, node, context);
+  for (const child of node.children ?? []) {
+    appendNode(runs, child, context);
+  }
+  return runs;
 }
 
 function isInlineNode(node: MarkdownNode): boolean {
