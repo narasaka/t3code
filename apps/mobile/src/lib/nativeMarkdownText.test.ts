@@ -260,6 +260,56 @@ describe("nativeMarkdownTextRuns", () => {
 });
 
 describe("nativeMarkdownDocumentRuns", () => {
+  it("keeps comma-separated URL values linked inside a list item", () => {
+    const url = "https://example.com/preview?features=images,canvas,fonts";
+    const linkedPrefix = "https://example.com/preview?features=images";
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "list",
+          children: [
+            {
+              type: "list_item",
+              children: [
+                {
+                  type: "paragraph",
+                  children: [
+                    {
+                      type: "link",
+                      href: linkedPrefix,
+                      children: [{ type: "text", content: linkedPrefix }],
+                    },
+                    { type: "text", content: ",canvas,fonts." },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(nativeMarkdownDocumentRuns(node)).toEqual([
+      {
+        text: "•\t",
+        role: "list-marker",
+        depth: 1,
+        firstLineHeadIndent: 0,
+        headIndent: 24,
+        paragraphSpacing: 2,
+      },
+      {
+        text: url,
+        role: "body",
+        depth: 1,
+        href: url,
+        externalHost: "example.com",
+      },
+      { text: ".", role: "body", depth: 1 },
+    ]);
+  });
+
   it("renders a file mention without swallowing sentence punctuation or changing package references", () => {
     const runs = nativeMarkdownDocumentRuns({
       type: "document",
